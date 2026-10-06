@@ -124,76 +124,6 @@ row (`per_model_columnar`, `spanning_or_partial`, `merged_wrapped_continuation`,
 etc.) so a value's provenance can be traced back through the pipeline, not
 just asserted in the final JSON.
 
-## Important extraction issue found and fixed
- 
-### Wrapped value lines were being dropped/truncated
- 
-During validation of the reconciliation output, a false conflict was found
-in **Grid Connection Standard / Grid Regulation**.
- 
-The reconciliation initially reported:
- 
-| Source 1                       | Source 2                               | Status   |
-| ------------------------------ | --------------------------------------- | -------- |
-| IEC 61727, IEC 62116, EN 50549 | OVE-Richtlinie R25, G99, VDE-AR-N 4105  | conflict |
- 
-However, Source 2's PDF contains the complete value as a single wrapped
-field:
- 
-```text
-IEC 61727, IEC 62116, CEI 0-21, EN 50549, NRS 097, RD 140,
-UNE 217002, OVE-Richtlinie R25, G99, VDE-AR-N 4105
-```
- 
-Therefore, Source 2 is a **superset of Source 1 rather than a
-contradiction**. The original parser had captured only the second physical
-line, silently dropping the first part of the standards list.
- 
-This was particularly important because the dropped values included
-`IEC 61727`, `IEC 62116`, and `EN 50549`, which are directly relevant to the
-reconciliation.
- 
-### Root cause
- 
-The original `merge_wrapped_rows()` handled a row where a label appeared on
-its own line followed by a value row, but did not correctly handle the case
-where:
- 
-1. a row already contained both a label and the first part of its value; and
-2. one or more following rows contained continuation text with no new
-   label.
-As a result, a multi-line field such as `Grid Regulation` could be
-truncated during layout parsing or subsequent row processing.
- 
-The downstream `table_parser.merge_parameterless_value_rows()` also had a
-merge-back condition that expected the previous row to have no value yet.
-That assumption does not hold when the first physical row already contains
-the label and a partial value.
- 
-### Fix
- 
-`merge_wrapped_rows()` was rewritten to continue absorbing follow-on
-value-only rows when they are likely continuations of the current field.
- 
-A new `looks_like_continuation()` heuristic was added. It considers factors
-such as token count and the proportion of non-numeric tokens to distinguish
-wrapped prose or standards lists from genuine per-model value rows.
- 
-This allows the parser to handle values wrapping across two or more
-physical lines while reducing the risk of incorrectly merging separate
-table rows.
- 
-The fix was verified with synthetic word-level data reproducing the
-multi-line `Grid Regulation` structure. The complete standards list is now
-reconstructed as a single field, and the manufacturer footer extraction was
-also verified.
- 
-Because the pipeline checkpoints intermediate results to disk, a full
-re-run after parser changes requires deleting the affected cached outputs
-under `data/parsed/`, `data/tables/`, and `data/normalized/`, or otherwise
-forcing those stages to regenerate, before checking the new reconciliation
-and compliance draft.
-
 ## Assumptions
 
 - "The 5 kW model" = `SUN-5K-G06P3`, per the client brief; both sources
@@ -211,23 +141,7 @@ and compliance draft.
 - Manufacturer identity is taken only from the automated footer-text
   search, not inferred from domain knowledge of who Deye is.
 
-## What I'd do with more time
-
-- Add a vision/OCR fallback (e.g. render the page and use a multimodal
-  call) for datasheets that turn out to be scanned images rather than
-  text-layer PDFs.
-- Move the Gemini reconciliation/report steps off "ask nicely for JSON in
-  the prompt + strip code fences" and onto structured output / tool
-  calling, so a malformed response doesn't kill the whole run.
-- Add retries/backoff around the Gemini calls, and unit tests for the
-  layout parser's row-merging logic against a few more datasheet
-  variants.
-- Either actually use `pymupdf` (currently an unused dependency) as a
-  cross-check against the pdfplumber extraction, or drop it.
-- Numeric-aware comparison (e.g. tolerate `97.5%` vs `97.50%`) instead of
-  string-level matching for the conflict/agreement classification.
-
-## Known limitations
+## limitations
 
 - **Layout parser is tuned to this specific datasheet family.** The
   coordinate thresholds and the 8-column expectation reflect Deye's
