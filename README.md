@@ -1,4 +1,3 @@
-# Cantordust AI Engineer Assessment — Task 1
 
 **SunBridge Trading — China → Nepal import compliance draft**
 **Product: SUN-5K-G06P3 (5 kW grid-tied inverter)**
